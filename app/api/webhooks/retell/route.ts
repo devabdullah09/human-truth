@@ -78,14 +78,24 @@ export async function POST(request: NextRequest) {
     // Log all possible transcript locations for debugging
     console.log("Checking transcript locations:", {
       hasBodyTranscript: !!body.transcript,
+      hasBodyTranscriptObject: !!body.transcript_object,
       hasBodyTranscriptEvents: !!body.transcript_events,
       hasPayloadTranscript: !!payload.transcript,
       hasBodyCallTranscript: !!body.call?.transcript,
       bodyKeys: Object.keys(body),
     });
     
-    // Try body.transcript first (most common)
-    if (body.transcript && Array.isArray(body.transcript)) {
+    // Try body.transcript_object first (Retell sends transcript here!)
+    if (body.transcript_object && Array.isArray(body.transcript_object)) {
+      console.log("Found transcript in body.transcript_object:", body.transcript_object.length, "items");
+      transcript = body.transcript_object.map((item: any) => ({
+        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+        content: item.content || item.text || item.message || String(item),
+        timestamp: item.timestamp || item.time || item.created_at,
+      })).filter((item: any) => item.content && item.content.trim());
+    }
+    // Try body.transcript as array
+    else if (body.transcript && Array.isArray(body.transcript)) {
       console.log("Found transcript in body.transcript:", body.transcript.length, "items");
       transcript = body.transcript.map((item: any) => ({
         role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
