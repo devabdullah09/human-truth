@@ -196,33 +196,6 @@ See `.env.example` for all required environment variables:
 └── package.json
 ```
 
-## Assumptions and Trade-offs
-
-### Assumptions
-
-1. **Webhook Validation**: Currently uses mock validation for development. In production, you should implement proper signature validation using Retell's webhook secret.
-
-2. **Transcript Format**: Assumes Retell AI sends transcripts in the format specified in the Zod schema. The actual format may vary based on Retell's API version.
-
-3. **Question Detection**: Questions are identified as agent messages followed by user responses. This is a simple heuristic and may not catch all question-answer pairs.
-
-4. **Database**: Uses Vercel Postgres free tier, which has limitations. For production use, consider upgrading or using a dedicated database.
-
-### Trade-offs
-
-1. **Time Constraints**: 
-   - Mock webhook validation instead of full implementation
-   - Simple question detection algorithm instead of NLP-based extraction
-   - Basic analytics instead of advanced insights
-
-2. **Error Handling**: 
-   - Basic error handling implemented
-   - Production should include more comprehensive error logging and monitoring
-
-3. **Security**:
-   - Webhook signature validation is mocked for development
-   - Production should implement proper authentication and rate limiting
-
 ## Development Commands
 
 ```bash
@@ -274,10 +247,6 @@ curl -X POST http://localhost:3000/api/webhooks/retell \
     "end_reason": "completed"
   }'
 ```
-
-## License
-
-This project is created for educational purposes as part of HumanTruth Module 1.
 
 ## Support
 
