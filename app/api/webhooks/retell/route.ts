@@ -36,8 +36,16 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     
-    // Log the incoming payload for debugging
-    console.log("Received webhook payload:", JSON.stringify(body, null, 2));
+    // Log the incoming payload for debugging (truncated for readability)
+    console.log("Received webhook payload - Event:", body.event, "Call ID:", body.call?.call_id);
+    console.log("Payload keys:", Object.keys(body));
+    console.log("Has transcript_object:", !!body.transcript_object, "Type:", typeof body.transcript_object);
+    if (body.transcript_object) {
+      console.log("transcript_object length:", Array.isArray(body.transcript_object) ? body.transcript_object.length : "not an array");
+      if (Array.isArray(body.transcript_object) && body.transcript_object.length > 0) {
+        console.log("First transcript_object item:", JSON.stringify(body.transcript_object[0], null, 2));
+      }
+    }
     
     // Validate payload with Zod (but be lenient for call_analyzed events)
     const validationResult = retellWebhookSchema.safeParse(body);
@@ -94,12 +102,24 @@ export async function POST(request: NextRequest) {
       console.log("Found transcript_object with", body.transcript_object.length, "items");
       console.log("First item sample:", JSON.stringify(body.transcript_object[0], null, 2));
       
-      transcript = body.transcript_object.map((item: any) => {
-        const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
-        const content = item.content || item.text || item.message || String(item);
-        const timestamp = item.timestamp || item.time || item.created_at;
+      transcript = body.transcript_object.map((item: any, index: number) => {
+        // Log the raw item to see its structure
+        if (index === 0) {
+          console.log("Raw transcript_object item:", JSON.stringify(item, null, 2));
+        }
         
-        console.log("Processing transcript item:", { role, contentLength: content?.length, hasContent: !!content });
+        const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
+        // Try multiple possible content field names
+        const content = item.content || item.text || item.message || item.transcript || item.words || String(item);
+        const timestamp = item.timestamp || item.time || item.created_at || item.start_time;
+        
+        console.log(`Item ${index}:`, { 
+          role, 
+          content: content?.substring(0, 50), 
+          contentLength: content?.length, 
+          hasContent: !!content,
+          itemKeys: Object.keys(item)
+        });
         
         return {
           role,
@@ -109,12 +129,15 @@ export async function POST(request: NextRequest) {
       }).filter((item: any) => {
         const hasContent = item.content && item.content.trim().length > 0;
         if (!hasContent) {
-          console.log("Filtered out item with no content:", item);
+          console.log("Filtered out item with no content:", JSON.stringify(item, null, 2));
         }
         return hasContent;
       });
       
       console.log("After filtering, transcript has", transcript.length, "items");
+      if (transcript.length > 0) {
+        console.log("Sample transcript items:", transcript.slice(0, 2).map(t => ({ role: t.role, content: t.content.substring(0, 50) })));
+      }
     }
     // Try body.transcript as array
     else if (body.transcript && Array.isArray(body.transcript)) {
