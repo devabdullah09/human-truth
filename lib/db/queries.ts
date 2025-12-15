@@ -1,0 +1,110 @@
+import { db } from "./index";
+import { interviews } from "./schema";
+import { eq, desc } from "drizzle-orm";
+
+export async function getAllInterviews() {
+  return await db.select().from(interviews).orderBy(desc(interviews.createdAt));
+}
+
+export async function getInterviewByCallId(callId: string) {
+  const result = await db
+    .select()
+    .from(interviews)
+    .where(eq(interviews.callId, callId))
+    .limit(1);
+  
+  return result[0] || null;
+}
+
+export async function getInterviewStats() {
+  const allInterviews = await getAllInterviews();
+  
+  const totalInterviews = allInterviews.length;
+  const completedInterviews = allInterviews.filter(i => i.completed).length;
+  const totalDuration = allInterviews.reduce((sum, i) => sum + i.duration, 0);
+  const averageDuration = totalInterviews > 0 ? Math.round(totalDuration / totalInterviews) : 0;
+  const completionRate = totalInterviews > 0 
+    ? Math.round((completedInterviews / totalInterviews) * 100) 
+    : 0;
+
+  return {
+    totalInterviews,
+    completedInterviews,
+    averageDuration,
+    completionRate,
+  };
+}
+
+export async function getQuestionAnalytics() {
+  const allInterviews = await getAllInterviews();
+  
+  // Extract questions and answers from transcripts
+  const questionMap = new Map<string, {
+    question: string;
+    responses: Array<{ callId: string; answer: string; timestamp: Date }>;
+    totalResponses: number;
+    averageLength: number;
+  }>();
+
+  allInterviews.forEach(interview => {
+    const transcript = interview.transcript || [];
+    
+    // Find agent questions and user responses
+    for (let i = 0; i < transcript.length; i++) {
+      const message = transcript[i];
+      
+      if (message.role === "agent" && message.content.trim()) {
+        const question = message.content.trim();
+        
+        // Look for the next user response
+        let userResponse = "";
+        for (let j = i + 1; j < transcript.length; j++) {
+          if (transcript[j].role === "user") {
+            userResponse = transcript[j].content.trim();
+            break;
+          }
+        }
+
+        if (!questionMap.has(question)) {
+          questionMap.set(question, {
+            question,
+            responses: [],
+            totalResponses: 0,
+            averageLength: 0,
+          });
+        }
+
+        const questionData = questionMap.get(question)!;
+        
+        if (userResponse) {
+          questionData.responses.push({
+            callId: interview.callId,
+            answer: userResponse,
+            timestamp: interview.createdAt,
+          });
+          questionData.totalResponses++;
+        }
+      }
+    }
+  });
+
+  // Calculate average response length for each question
+  const questionAnalytics = Array.from(questionMap.values()).map(q => {
+    const totalLength = q.responses.reduce((sum, r) => sum + r.answer.length, 0);
+    const averageLength = q.totalResponses > 0 
+      ? Math.round(totalLength / q.totalResponses) 
+      : 0;
+    
+    return {
+      ...q,
+      averageLength,
+      // Sort responses by timestamp (most recent first)
+      responses: q.responses.sort((a, b) => 
+        b.timestamp.getTime() - a.timestamp.getTime()
+      ).slice(0, 5), // Keep only 5 most recent
+    };
+  });
+
+  return questionAnalytics.sort((a, b) => b.totalResponses - a.totalResponses);
+}
+
