@@ -63,9 +63,13 @@ export async function POST(request: NextRequest) {
 
     // Process call_ended, call_analysis, and call_analyzed events
     // call_analyzed typically contains the transcript
-    if (payload.event !== "call_ended" && payload.event !== "call_analysis" && payload.event !== "call_analyzed") {
+    const eventType = payload.event || body.event;
+    console.log("Processing event type:", eventType);
+    
+    if (eventType !== "call_ended" && eventType !== "call_analysis" && eventType !== "call_analyzed") {
+      console.log("Skipping event:", eventType);
       return NextResponse.json(
-        { message: "Event not processed", event: payload.event },
+        { message: "Event not processed", event: eventType },
         { status: 200 }
       );
     }
@@ -87,12 +91,30 @@ export async function POST(request: NextRequest) {
     
     // Try body.transcript_object first (Retell sends transcript here!)
     if (body.transcript_object && Array.isArray(body.transcript_object)) {
-      console.log("Found transcript in body.transcript_object:", body.transcript_object.length, "items");
-      transcript = body.transcript_object.map((item: any) => ({
-        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
-        content: item.content || item.text || item.message || String(item),
-        timestamp: item.timestamp || item.time || item.created_at,
-      })).filter((item: any) => item.content && item.content.trim());
+      console.log("Found transcript_object with", body.transcript_object.length, "items");
+      console.log("First item sample:", JSON.stringify(body.transcript_object[0], null, 2));
+      
+      transcript = body.transcript_object.map((item: any) => {
+        const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
+        const content = item.content || item.text || item.message || String(item);
+        const timestamp = item.timestamp || item.time || item.created_at;
+        
+        console.log("Processing transcript item:", { role, contentLength: content?.length, hasContent: !!content });
+        
+        return {
+          role,
+          content: content || "",
+          timestamp,
+        };
+      }).filter((item: any) => {
+        const hasContent = item.content && item.content.trim().length > 0;
+        if (!hasContent) {
+          console.log("Filtered out item with no content:", item);
+        }
+        return hasContent;
+      });
+      
+      console.log("After filtering, transcript has", transcript.length, "items");
     }
     // Try body.transcript as array
     else if (body.transcript && Array.isArray(body.transcript)) {
@@ -197,7 +219,8 @@ export async function POST(request: NextRequest) {
       duration, 
       completed,
       event: payload.event || body.event,
-      transcriptPreview: transcript.slice(0, 2).map(t => ({ role: t.role, content: t.content.substring(0, 50) }))
+      transcriptPreview: transcript.slice(0, 2).map(t => ({ role: t.role, content: t.content.substring(0, 50) })),
+      fullTranscript: transcript // Log full transcript for debugging
     });
 
     // Check if interview already exists
@@ -208,34 +231,46 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (existingInterview.length > 0) {
-      // Update existing interview
+      // Update existing interview - always update transcript if we have it
+      const updateData: any = {
+        duration,
+        completed,
+        updatedAt: new Date(),
+      };
+      
+      // Only update transcript if we have transcript data
+      if (transcript.length > 0) {
+        updateData.transcript = transcript;
+        console.log("Updating interview with transcript:", transcript.length, "messages");
+      } else {
+        console.log("No transcript to update, keeping existing transcript");
+      }
+      
       await db
         .update(interviews)
-        .set({
-          transcript,
-          duration,
-          completed,
-          updatedAt: new Date(),
-        })
+        .set(updateData)
         .where(eq(interviews.callId, callId));
 
+      console.log("Interview updated successfully. Transcript length:", transcript.length);
       return NextResponse.json(
-        { message: "Interview updated successfully" },
+        { message: "Interview updated successfully", transcriptLength: transcript.length },
         { status: 200 }
       );
     }
 
     // Create new interview
+    console.log("Creating new interview with transcript:", transcript.length, "messages");
     await db.insert(interviews).values({
       callId,
       participantId: payload.call.metadata?.participant_id || null,
-      transcript,
+      transcript: transcript.length > 0 ? transcript : [],
       duration,
       completed,
     });
 
+    console.log("Interview stored successfully. Transcript length:", transcript.length);
     return NextResponse.json(
-      { message: "Interview stored successfully" },
+      { message: "Interview stored successfully", transcriptLength: transcript.length },
       { status: 201 }
     );
   } catch (error) {
