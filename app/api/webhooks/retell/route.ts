@@ -39,23 +39,31 @@ export async function POST(request: NextRequest) {
     // Log the incoming payload for debugging
     console.log("Received webhook payload:", JSON.stringify(body, null, 2));
     
-    // Validate payload with Zod
+    // Validate payload with Zod (but be lenient for call_analyzed events)
     const validationResult = retellWebhookSchema.safeParse(body);
     
+    let payload: any;
     if (!validationResult.success) {
-      console.error("Invalid webhook payload:", validationResult.error);
-      // Log the actual body structure for debugging
-      console.error("Actual payload structure:", JSON.stringify(body, null, 2));
-      return NextResponse.json(
-        { error: "Invalid webhook payload", details: validationResult.error },
-        { status: 400 }
-      );
+      // For call_analyzed events, be more lenient with validation
+      if (body.event === "call_analyzed" && body.call?.call_id) {
+        console.warn("Validation failed but accepting call_analyzed event:", validationResult.error);
+        payload = body; // Use raw body for call_analyzed events
+      } else {
+        console.error("Invalid webhook payload:", validationResult.error);
+        // Log the actual body structure for debugging
+        console.error("Actual payload structure:", JSON.stringify(body, null, 2));
+        return NextResponse.json(
+          { error: "Invalid webhook payload", details: validationResult.error },
+          { status: 400 }
+        );
+      }
+    } else {
+      payload = validationResult.data;
     }
 
-    const payload = validationResult.data;
-
-    // Process both call_ended and call_analysis events
-    if (payload.event !== "call_ended" && payload.event !== "call_analysis") {
+    // Process call_ended, call_analysis, and call_analyzed events
+    // call_analyzed typically contains the transcript
+    if (payload.event !== "call_ended" && payload.event !== "call_analysis" && payload.event !== "call_analyzed") {
       return NextResponse.json(
         { message: "Event not processed", event: payload.event },
         { status: 200 }
@@ -64,28 +72,98 @@ export async function POST(request: NextRequest) {
 
     const callId = payload.call.call_id;
     
-    // Extract transcript - try multiple possible locations
+    // Extract transcript - try multiple possible locations and formats
     let transcript: Array<{ role: "agent" | "user"; content: string; timestamp?: number }> = [];
     
+    // Log all possible transcript locations for debugging
+    console.log("Checking transcript locations:", {
+      hasBodyTranscript: !!body.transcript,
+      hasBodyTranscriptEvents: !!body.transcript_events,
+      hasPayloadTranscript: !!payload.transcript,
+      hasBodyCallTranscript: !!body.call?.transcript,
+      bodyKeys: Object.keys(body),
+    });
+    
+    // Try body.transcript first (most common)
     if (body.transcript && Array.isArray(body.transcript)) {
+      console.log("Found transcript in body.transcript:", body.transcript.length, "items");
       transcript = body.transcript.map((item: any) => ({
-        role: (item.role === "assistant" ? "agent" : item.role) as "agent" | "user",
-        content: item.content || item.text || "",
-        timestamp: item.timestamp,
-      })).filter((item: any) => item.content);
-    } else if (body.transcript_events && Array.isArray(body.transcript_events)) {
-      // Retell might send transcript_events instead
+        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+        content: item.content || item.text || item.message || String(item),
+        timestamp: item.timestamp || item.time || item.created_at,
+      })).filter((item: any) => item.content && item.content.trim());
+    }
+    // Try body.transcript_events
+    else if (body.transcript_events && Array.isArray(body.transcript_events)) {
+      console.log("Found transcript in body.transcript_events:", body.transcript_events.length, "items");
       transcript = body.transcript_events.map((event: any) => ({
-        role: (event.role === "assistant" ? "agent" : (event.role || event.sender || "user")) as "agent" | "user",
-        content: event.text || event.content || event.message || "",
-        timestamp: event.timestamp || event.created_at,
-      })).filter((event: any) => event.content);
-    } else if (payload.transcript && Array.isArray(payload.transcript)) {
+        role: (event.role === "assistant" || event.role === "agent" ? "agent" : (event.role || event.sender || "user")) as "agent" | "user",
+        content: event.text || event.content || event.message || event.transcript || String(event),
+        timestamp: event.timestamp || event.time || event.created_at,
+      })).filter((event: any) => event.content && event.content.trim());
+    }
+    // Try body.call.transcript
+    else if (body.call?.transcript && Array.isArray(body.call.transcript)) {
+      console.log("Found transcript in body.call.transcript:", body.call.transcript.length, "items");
+      transcript = body.call.transcript.map((item: any) => ({
+        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+        content: item.content || item.text || item.message || String(item),
+        timestamp: item.timestamp || item.time,
+      })).filter((item: any) => item.content && item.content.trim());
+    }
+    // Try payload.transcript
+    else if (payload.transcript && Array.isArray(payload.transcript)) {
+      console.log("Found transcript in payload.transcript:", payload.transcript.length, "items");
       transcript = payload.transcript.map((item: any) => ({
-        role: (item.role === "assistant" ? "agent" : item.role) as "agent" | "user",
-        content: item.content || item.text || "",
-        timestamp: item.timestamp,
-      })).filter((item: any) => item.content);
+        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+        content: item.content || item.text || item.message || String(item),
+        timestamp: item.timestamp || item.time,
+      })).filter((item: any) => item.content && item.content.trim());
+    }
+    // Try body.analysis.transcript or body.analysis.transcript_events
+    else if (body.analysis?.transcript && Array.isArray(body.analysis.transcript)) {
+      console.log("Found transcript in body.analysis.transcript:", body.analysis.transcript.length, "items");
+      transcript = body.analysis.transcript.map((item: any) => ({
+        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+        content: item.content || item.text || item.message || String(item),
+        timestamp: item.timestamp || item.time,
+      })).filter((item: any) => item.content && item.content.trim());
+    }
+    
+    // For call_analyzed events, transcript might be in different locations
+    if (transcript.length === 0 && (payload.event === "call_analyzed" || body.event === "call_analyzed")) {
+      // Try body.transcript_items or body.transcript_segments
+      if (body.transcript_items && Array.isArray(body.transcript_items)) {
+        console.log("Found transcript in body.transcript_items:", body.transcript_items.length, "items");
+        transcript = body.transcript_items.map((item: any) => ({
+          role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+          content: item.content || item.text || item.message || String(item),
+          timestamp: item.timestamp || item.time || item.start_time,
+        })).filter((item: any) => item.content && item.content.trim());
+      }
+      // Try body.transcript_segments
+      else if (body.transcript_segments && Array.isArray(body.transcript_segments)) {
+        console.log("Found transcript in body.transcript_segments:", body.transcript_segments.length, "items");
+        transcript = body.transcript_segments.map((item: any) => ({
+          role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+          content: item.content || item.text || item.message || String(item),
+          timestamp: item.timestamp || item.time || item.start_time,
+        })).filter((item: any) => item.content && item.content.trim());
+      }
+      // Try body.utterances (common in speech-to-text APIs)
+      else if (body.utterances && Array.isArray(body.utterances)) {
+        console.log("Found transcript in body.utterances:", body.utterances.length, "items");
+        transcript = body.utterances.map((item: any) => ({
+          role: (item.speaker === "assistant" || item.speaker === "agent" || item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
+          content: item.text || item.content || item.message || String(item),
+          timestamp: item.timestamp || item.start_time || item.time,
+        })).filter((item: any) => item.content && item.content.trim());
+      }
+    }
+    
+    // If still no transcript, log the entire body structure for debugging
+    if (transcript.length === 0) {
+      console.log("No transcript found. Full body structure:", JSON.stringify(body, null, 2));
     }
     
     // Extract duration - try multiple possible fields
@@ -103,7 +181,14 @@ export async function POST(request: NextRequest) {
     
     const completed = payload.end_reason !== "error" && payload.end_reason !== "failed";
     
-    console.log("Extracted data:", { callId, transcriptLength: transcript.length, duration, completed });
+    console.log("Extracted data:", { 
+      callId, 
+      transcriptLength: transcript.length, 
+      duration, 
+      completed,
+      event: payload.event || body.event,
+      transcriptPreview: transcript.slice(0, 2).map(t => ({ role: t.role, content: t.content.substring(0, 50) }))
+    });
 
     // Check if interview already exists
     const existingInterview = await db

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Retell AI webhook payload schema
 export const retellWebhookSchema = z.object({
-  event: z.enum(["call_ended", "call_analysis", "call_started"]).optional(),
+  event: z.enum(["call_ended", "call_analysis", "call_analyzed", "call_started"]).optional(),
   call: z.object({
     call_id: z.string(),
     agent_id: z.string().optional(),
