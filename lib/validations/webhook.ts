@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-// Retell AI webhook payload schema
 export const retellWebhookSchema = z.object({
   event: z.enum(["call_ended", "call_analysis", "call_analyzed", "call_started"]).optional(),
   call: z.object({
@@ -14,7 +13,7 @@ export const retellWebhookSchema = z.object({
     end_timestamp: z.number().optional(),
     duration: z.number().optional(),
     call_duration: z.number().optional(),
-  }).passthrough(), // Allow extra fields
+  }).passthrough(),
   transcript: z.array(z.object({
     role: z.enum(["agent", "user", "assistant"]).optional(),
     content: z.string().optional(),
@@ -26,9 +25,9 @@ export const retellWebhookSchema = z.object({
     summary: z.string().optional(),
     sentiment: z.string().optional(),
   }).optional(),
-  call_duration: z.number().optional(), // in seconds
-  duration: z.number().optional(), // alternative field name
+  call_duration: z.number().optional(),
+  duration: z.number().optional(),
   end_reason: z.string().optional(),
-}).passthrough(); // Allow extra fields for flexibility
+}).passthrough();
 
 export type RetellWebhookPayload = z.infer<typeof retellWebhookSchema>;

@@ -59,7 +59,6 @@ export async function getQuestionAnalytics() {
   try {
     const allInterviews = await getAllInterviews();
   
-  // Extract questions and answers from transcripts
   const questionMap = new Map<string, {
     question: string;
     responses: Array<{ callId: string; answer: string; timestamp: Date }>;
@@ -70,14 +69,11 @@ export async function getQuestionAnalytics() {
   allInterviews.forEach(interview => {
     const transcript = interview.transcript || [];
     
-    // Find agent questions and user responses
     for (let i = 0; i < transcript.length; i++) {
       const message = transcript[i];
       
       if (message.role === "agent" && message.content.trim()) {
         const question = message.content.trim();
-        
-        // Look for the next user response
         let userResponse = "";
         for (let j = i + 1; j < transcript.length; j++) {
           if (transcript[j].role === "user") {
@@ -109,7 +105,6 @@ export async function getQuestionAnalytics() {
     }
   });
 
-  // Calculate average response length for each question
   const questionAnalytics = Array.from(questionMap.values()).map(q => {
     const totalLength = q.responses.reduce((sum, r) => sum + r.answer.length, 0);
     const averageLength = q.totalResponses > 0 
@@ -119,10 +114,9 @@ export async function getQuestionAnalytics() {
     return {
       ...q,
       averageLength,
-      // Sort responses by timestamp (most recent first)
       responses: q.responses.sort((a, b) => 
         b.timestamp.getTime() - a.timestamp.getTime()
-      ).slice(0, 5), // Keep only 5 most recent
+      ).slice(0, 5),
     };
   });
 

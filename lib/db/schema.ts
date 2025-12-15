@@ -10,7 +10,7 @@ export const interviews = pgTable("interviews", {
     content: string;
     timestamp?: number;
   }>>().notNull().default([]),
-  duration: integer("duration").notNull().default(0), // in seconds
+  duration: integer("duration").notNull().default(0),
   completed: boolean("completed").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
