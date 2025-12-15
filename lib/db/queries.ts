@@ -3,21 +3,32 @@ import { interviews } from "./schema";
 import { eq, desc } from "drizzle-orm";
 
 export async function getAllInterviews() {
-  return await db.select().from(interviews).orderBy(desc(interviews.createdAt));
+  try {
+    return await db.select().from(interviews).orderBy(desc(interviews.createdAt));
+  } catch (error) {
+    console.error("Error fetching interviews:", error);
+    return [];
+  }
 }
 
 export async function getInterviewByCallId(callId: string) {
-  const result = await db
-    .select()
-    .from(interviews)
-    .where(eq(interviews.callId, callId))
-    .limit(1);
-  
-  return result[0] || null;
+  try {
+    const result = await db
+      .select()
+      .from(interviews)
+      .where(eq(interviews.callId, callId))
+      .limit(1);
+    
+    return result[0] || null;
+  } catch (error) {
+    console.error("Error fetching interview:", error);
+    return null;
+  }
 }
 
 export async function getInterviewStats() {
-  const allInterviews = await getAllInterviews();
+  try {
+    const allInterviews = await getAllInterviews();
   
   const totalInterviews = allInterviews.length;
   const completedInterviews = allInterviews.filter(i => i.completed).length;
@@ -27,16 +38,26 @@ export async function getInterviewStats() {
     ? Math.round((completedInterviews / totalInterviews) * 100) 
     : 0;
 
-  return {
-    totalInterviews,
-    completedInterviews,
-    averageDuration,
-    completionRate,
-  };
+    return {
+      totalInterviews,
+      completedInterviews,
+      averageDuration,
+      completionRate,
+    };
+  } catch (error) {
+    console.error("Error fetching stats:", error);
+    return {
+      totalInterviews: 0,
+      completedInterviews: 0,
+      averageDuration: 0,
+      completionRate: 0,
+    };
+  }
 }
 
 export async function getQuestionAnalytics() {
-  const allInterviews = await getAllInterviews();
+  try {
+    const allInterviews = await getAllInterviews();
   
   // Extract questions and answers from transcripts
   const questionMap = new Map<string, {
@@ -105,6 +126,10 @@ export async function getQuestionAnalytics() {
     };
   });
 
-  return questionAnalytics.sort((a, b) => b.totalResponses - a.totalResponses);
+    return questionAnalytics.sort((a, b) => b.totalResponses - a.totalResponses);
+  } catch (error) {
+    console.error("Error fetching question analytics:", error);
+    return [];
+  }
 }
 
