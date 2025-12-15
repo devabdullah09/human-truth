@@ -6,6 +6,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { getInterviewStats, getQuestionAnalytics, getAllInterviews } from "@/lib/db/queries";
 import { formatDistanceToNow } from "date-fns";
 
+export const dynamic = 'force-dynamic';
+
 async function DashboardStats() {
   const stats = await getInterviewStats();
   

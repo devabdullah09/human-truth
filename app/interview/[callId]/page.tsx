@@ -8,6 +8,8 @@ import { getInterviewByCallId } from "@/lib/db/queries";
 import { formatDistanceToNow, format } from "date-fns";
 import { ArrowLeft, Clock, CheckCircle2, XCircle } from "lucide-react";
 
+export const dynamic = 'force-dynamic';
+
 async function InterviewDetail({ callId }: { callId: string }) {
   const interview = await getInterviewByCallId(callId);
 
