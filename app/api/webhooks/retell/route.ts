@@ -37,17 +37,40 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     
     // Log the incoming payload for debugging (truncated for readability)
-    console.log("Received webhook payload - Event:", body.event, "Call ID:", body.call?.call_id);
-    console.log("Payload keys:", Object.keys(body));
-    console.log("Has transcript_object:", !!body.transcript_object, "Type:", typeof body.transcript_object);
+    console.log("=== WEBHOOK RECEIVED ===");
+    console.log("Event:", body.event, "Call ID:", body.call?.call_id);
+    console.log("Top-level keys:", Object.keys(body));
+    console.log("Has transcript_object (top level):", !!body.transcript_object);
+    console.log("Has transcript (top level):", !!body.transcript);
+    console.log("Has call.transcript:", !!body.call?.transcript);
+    console.log("call keys:", body.call ? Object.keys(body.call) : []);
+    
+    // Log the actual transcript_object if it exists
     if (body.transcript_object) {
-      console.log("transcript_object length:", Array.isArray(body.transcript_object) ? body.transcript_object.length : "not an array");
+      console.log("transcript_object type:", typeof body.transcript_object, "isArray:", Array.isArray(body.transcript_object));
       if (Array.isArray(body.transcript_object) && body.transcript_object.length > 0) {
+        console.log("transcript_object length:", body.transcript_object.length);
         console.log("First transcript_object item:", JSON.stringify(body.transcript_object[0], null, 2));
       }
     }
     
-    // Validate payload with Zod (but be lenient for call_analyzed events)
+    // Also check if transcript_object is nested in call
+    if (body.call?.transcript_object) {
+      console.log("Found transcript_object in call.transcript_object!");
+      console.log("call.transcript_object type:", typeof body.call.transcript_object, "isArray:", Array.isArray(body.call.transcript_object));
+    }
+    
+    // Check for transcript_object BEFORE validation (it might get stripped)
+    const hasTranscriptObjectBeforeValidation = !!body.transcript_object;
+    console.log("BEFORE VALIDATION - Has transcript_object:", hasTranscriptObjectBeforeValidation);
+    if (body.transcript_object) {
+      console.log("BEFORE VALIDATION - transcript_object type:", typeof body.transcript_object, "isArray:", Array.isArray(body.transcript_object));
+      if (Array.isArray(body.transcript_object)) {
+        console.log("BEFORE VALIDATION - transcript_object length:", body.transcript_object.length);
+      }
+    }
+    
+    // Validate payload with Zod (but be more lenient - don't strip transcript_object)
     const validationResult = retellWebhookSchema.safeParse(body);
     
     let payload: any;
@@ -55,19 +78,23 @@ export async function POST(request: NextRequest) {
       // For call_analyzed events, be more lenient with validation
       if (body.event === "call_analyzed" && body.call?.call_id) {
         console.warn("Validation failed but accepting call_analyzed event:", validationResult.error);
-        payload = body; // Use raw body for call_analyzed events
+        payload = body; // Use raw body for call_analyzed events - preserves transcript_object
       } else {
         console.error("Invalid webhook payload:", validationResult.error);
-        // Log the actual body structure for debugging
-        console.error("Actual payload structure:", JSON.stringify(body, null, 2));
-        return NextResponse.json(
-          { error: "Invalid webhook payload", details: validationResult.error },
-          { status: 400 }
-        );
+        // Still use raw body to preserve transcript_object
+        payload = body;
+        console.warn("Using raw body despite validation failure to preserve transcript_object");
       }
     } else {
       payload = validationResult.data;
+      // Make sure transcript_object is preserved even after validation
+      if (body.transcript_object && !payload.transcript_object) {
+        payload.transcript_object = body.transcript_object;
+        console.log("Restored transcript_object from raw body after validation");
+      }
     }
+    
+    console.log("AFTER VALIDATION - Has transcript_object:", !!payload.transcript_object, "Has body.transcript_object:", !!body.transcript_object);
 
     // Process call_ended, call_analysis, and call_analyzed events
     // call_analyzed typically contains the transcript
@@ -94,11 +121,127 @@ export async function POST(request: NextRequest) {
       hasBodyTranscriptEvents: !!body.transcript_events,
       hasPayloadTranscript: !!payload.transcript,
       hasBodyCallTranscript: !!body.call?.transcript,
+      callKeys: body.call ? Object.keys(body.call) : [],
       bodyKeys: Object.keys(body),
     });
     
-    // Try body.transcript_object first (Retell sends transcript here!)
+    // PRIORITY 1: Check transcript_object at top level FIRST (use raw body, not validated payload!)
+    // Validation might strip transcript_object, so always check the raw body
     if (body.transcript_object && Array.isArray(body.transcript_object)) {
+      console.log("✓✓✓ FOUND transcript_object at top level:", body.transcript_object.length, "items");
+      console.log("First transcript_object item:", JSON.stringify(body.transcript_object[0], null, 2));
+      
+      transcript = body.transcript_object.map((item: any, index: number) => {
+        if (index === 0) {
+          console.log("Raw transcript_object item:", JSON.stringify(item, null, 2));
+        }
+        
+        const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
+        const content = item.content || item.text || item.message || item.transcript || item.words || String(item);
+        const timestamp = item.timestamp || item.time || item.created_at || item.start_time;
+        
+        return {
+          role,
+          content: content || "",
+          timestamp,
+        };
+      }).filter((item: any) => {
+        const hasContent = item.content && item.content.trim().length > 0;
+        if (!hasContent) {
+          console.log("✗ Filtered out (no content):", item);
+        }
+        return hasContent;
+      });
+      
+      console.log("✓✓✓ SUCCESS: After processing transcript_object, transcript has", transcript.length, "items");
+    }
+    // PRIORITY 2: Try body.call.transcript (might be array or string)
+    else if (body.call?.transcript) {
+      console.log("Found body.call.transcript, type:", typeof body.call.transcript, "isArray:", Array.isArray(body.call.transcript));
+      
+      if (Array.isArray(body.call.transcript)) {
+        console.log("Found transcript in body.call.transcript (array):", body.call.transcript.length, "items");
+        console.log("First call.transcript item:", JSON.stringify(body.call.transcript[0], null, 2));
+        
+        transcript = body.call.transcript.map((item: any, index: number) => {
+          if (index === 0) {
+            console.log("Raw call.transcript item:", JSON.stringify(item, null, 2));
+          }
+          
+          const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
+          const content = item.content || item.text || item.message || item.transcript || String(item);
+          const timestamp = item.timestamp || item.time || item.created_at || item.start_time;
+          
+          return {
+            role,
+            content: content || "",
+            timestamp,
+          };
+        }).filter((item: any) => {
+          const hasContent = item.content && item.content.trim().length > 0;
+          if (!hasContent) {
+            console.log("Filtered out call.transcript item:", item);
+          }
+          return hasContent;
+        });
+        
+        console.log("After processing call.transcript (array), transcript has", transcript.length, "items");
+      } else if (typeof body.call.transcript === "string") {
+        // If transcript is a string, try to parse it or use transcript_object
+        console.log("body.call.transcript is a string, length:", body.call.transcript.length);
+        // Don't process string transcript - wait for transcript_object
+      } else {
+        console.log("body.call.transcript is neither array nor string:", typeof body.call.transcript, JSON.stringify(body.call.transcript, null, 2));
+      }
+    }
+    // Try body.transcript_object at top level FIRST (Retell sends it here in call_analyzed events!)
+    if (!transcript.length && body.transcript_object && Array.isArray(body.transcript_object)) {
+      console.log("Found transcript_object at top level:", body.transcript_object.length, "items");
+      console.log("First transcript_object item:", JSON.stringify(body.transcript_object[0], null, 2));
+      
+      transcript = body.transcript_object.map((item: any, index: number) => {
+        if (index === 0) {
+          console.log("Raw transcript_object item:", JSON.stringify(item, null, 2));
+        }
+        
+        const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
+        const content = item.content || item.text || item.message || item.transcript || item.words || String(item);
+        const timestamp = item.timestamp || item.time || item.created_at || item.start_time;
+        
+        return {
+          role,
+          content: content || "",
+          timestamp,
+        };
+      }).filter((item: any) => {
+        const hasContent = item.content && item.content.trim().length > 0;
+        if (!hasContent) {
+          console.log("Filtered out transcript_object item:", item);
+        }
+        return hasContent;
+      });
+      
+      console.log("After processing transcript_object, transcript has", transcript.length, "items");
+    }
+    // Try body.call.transcript_object (nested in call)
+    else if (body.call?.transcript_object && Array.isArray(body.call.transcript_object)) {
+      console.log("Found transcript_object in call.transcript_object:", body.call.transcript_object.length, "items");
+      transcript = body.call.transcript_object.map((item: any) => {
+        const role = (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user";
+        const content = item.content || item.text || item.message || String(item);
+        const timestamp = item.timestamp || item.time || item.created_at;
+        
+        return {
+          role,
+          content: content || "",
+          timestamp,
+        };
+      }).filter((item: any) => item.content && item.content.trim());
+      
+      console.log("After processing call.transcript_object, transcript has", transcript.length, "items");
+    }
+    // Try body.transcript as array (fallback)
+    else if (body.transcript && Array.isArray(body.transcript)) {
       console.log("Found transcript_object with", body.transcript_object.length, "items");
       console.log("First item sample:", JSON.stringify(body.transcript_object[0], null, 2));
       
@@ -157,15 +300,7 @@ export async function POST(request: NextRequest) {
         timestamp: event.timestamp || event.time || event.created_at,
       })).filter((event: any) => event.content && event.content.trim());
     }
-    // Try body.call.transcript
-    else if (body.call?.transcript && Array.isArray(body.call.transcript)) {
-      console.log("Found transcript in body.call.transcript:", body.call.transcript.length, "items");
-      transcript = body.call.transcript.map((item: any) => ({
-        role: (item.role === "assistant" || item.role === "agent" ? "agent" : "user") as "agent" | "user",
-        content: item.content || item.text || item.message || String(item),
-        timestamp: item.timestamp || item.time,
-      })).filter((item: any) => item.content && item.content.trim());
-    }
+    // body.call.transcript is already checked above as FIRST priority
     // Try payload.transcript
     else if (payload.transcript && Array.isArray(payload.transcript)) {
       console.log("Found transcript in payload.transcript:", payload.transcript.length, "items");
