@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Outfit } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const outfit = Outfit({ 
+  subsets: ["latin"],
+  variable: "--font-outfit",
+});
 
 export const metadata: Metadata = {
-  title: "Voice Interview Platform",
-  description: "Mini voice interview platform powered by Retell AI",
+  title: "VoiceInsight | Interview Analytics",
+  description: "AI-powered voice interview platform with real-time analytics",
 };
 
 export default function RootLayout({
@@ -15,8 +18,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className="dark">
+      <body className={`${outfit.className} bg-radial-gradient min-h-screen`}>
+        {children}
+      </body>
     </html>
   );
 }
